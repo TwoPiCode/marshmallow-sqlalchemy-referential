@@ -31,8 +31,14 @@ class Referential(fields.Field):
 
         {
             "myRelatedField": [
-                {"id": 1},
-                {"id": 2}
+                {
+                    "id": 1
+                    "name": "foo"
+                },
+                {
+                    "id": 2
+                    "name": "bar"
+                }
             ]
         }
 
@@ -78,7 +84,9 @@ class Referential(fields.Field):
                 if item is None:
                     err = {
                         i: {
-                            self._key: "Record could not be found"
+                            self._key: "Record with {}='{}' could not be"
+                                       " found".format(self._key,
+                                                       repr(elem['key']))
                         }
                     }
                     raise ValidationError(err)
@@ -86,4 +94,11 @@ class Referential(fields.Field):
 
             return rv
         else:
-            return "Not Implemented"
+            item = self.session.query(self._model).get(data['key'])
+            if item is None:
+                err = {
+                    self._key: "Record with {}={} could not be"
+                               " found".format(self._key, repr(data['key']))
+                }
+                raise ValidationError(err)
+            return item
