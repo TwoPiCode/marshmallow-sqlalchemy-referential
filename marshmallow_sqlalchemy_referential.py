@@ -1,48 +1,52 @@
 from marshmallow_sqlalchemy.fields import get_schema_for_field
-from marshmallow import fields, Schema, ValidationError
+from marshmallow import fields, Schema, ValidationError, class_registry
+from marshmallow.compat import basestring
+from marshmallow.base import SchemaABC
 
 
 class Referential(fields.Field):
-    def __init__(self, related_schema, model=None, many=False, key='id',
-                 key_field=None, **kwargs):
-        """A marshmallow-sqlalchemy field allows referential CRUD on relational fields.
 
-        :param related_schema: The schema to serialise the field values
-        :param model: The model queried when de-serializing
-        :param many: `True` if this is a collection (default `False`)
-        :param key: The key field name when loading (default `id`)
-        :param key_field: The key field (marshmallow.fields.Field) used when
-                          loading. Overrides `key`
+    """A marshmallow-sqlalchemy field allows referential CRUD on relational fields.
+
+    :param related_schema: The schema to serialise the field values
+    :param model: The model queried when de-serializing
+    :param many: `True` if this is a collection (default `False`)
+    :param key: The key field name when loading (default `id`)
+    :param key_field: The key field (marshmallow.fields.Field) used when
+                      loading. Overrides `key`
 
 `
-        For example, on a one to many relationship, on the many side, you may
-        want to set the list of related entities.
+    For example, on a one to many relationship, on the many side, you may
+    want to set the list of related entities.
 
-        To do so, you would specify:
+    To do so, you would specify:
 
-        {
-            "myRelatedField": [
-                {"id": 1},
-                {"id": 2}
-            ]
-        }
+    {
+        "myRelatedField": [
+            {"id": 1},
+            {"id": 2}
+        ]
+    }
 
-        And be returned a response which resolves to the actual objects:
+    And be returned a response which resolves to the actual objects:
 
-        {
-            "myRelatedField": [
-                {
-                    "id": 1
-                    "name": "foo"
-                },
-                {
-                    "id": 2
-                    "name": "bar"
-                }
-            ]
-        }
+    {
+        "myRelatedField": [
+            {
+                "id": 1
+                "name": "foo"
+            },
+            {
+                "id": 2
+                "name": "bar"
+            }
+        ]
+    }
 
-        """
+    """
+
+    def __init__(self, nested, model=None, many=False, key='id',
+                 exclude=tuple(), only=None, key_field=None, **kwargs):
 
         super().__init__(many=many, **kwargs)
 
@@ -55,13 +59,55 @@ class Referential(fields.Field):
         class ReferentialLoader(Schema):
             key = key_field
 
-        self._related_schema = related_schema
+        self._nested = nested
         self._model = model
+
         self._many = many
+        self._only = only
+        self._exclude = exclude
+
         self._loader = ReferentialLoader(many=self._many)
 
-        if hasattr(self._related_schema, '__name__'):
-            self._related_schema = self._related_schema(many=self._many)
+        self.__schema = None  # Cached Schema instance
+
+    @property
+    def schema(self):
+        context = getattr(self.parent, 'context', {})
+
+        print(class_registry)
+
+        if isinstance(self._only, basestring):
+            only = (self._only, )
+        else:
+            only = self._only
+
+        if not self.__schema:
+            if isinstance(self._nested, SchemaABC):
+                self.__schema = self._nested
+                self.__schema.context.update(context)
+            elif isinstance(self._nested, type) and \
+                    issubclass(self._nested, SchemaABC):
+                self.__schema = self._nested(many=self._many, only=only,
+                                             exclude=self._exclude,
+                                             context=context)
+
+            elif isinstance(self._nested, basestring):
+                if self._nested == fields._RECURSIVE_NESTED:
+                    parent_class = self.parent.__class__
+                    self.__schema = parent_class(
+                        many=self._many, only=only, exclude=self._exclude,
+                        context=context)
+                else:
+                    schema_class = class_registry.get_class(self._nested)
+                    self.__schema = schema_class(
+                        many=self._many, only=only, exclude=self._exclude,
+                        context=context)
+            else:
+                raise ValueError('Nested fields must be passed a '
+                                 'Schema, not {0}.'.format(
+                                    self._nested.__class__))
+
+        return self.__schema
 
     @property
     def session(self):
@@ -69,7 +115,10 @@ class Referential(fields.Field):
         return schema.session
 
     def _serialize(self, value, attr, obj):
-        data, err = self._related_schema.dump(value)
+        if value is None:
+            return value
+
+        data, err = self.schema.dump(value)
         return data
 
     def _deserialize(self, value, *args, **kwargs):
