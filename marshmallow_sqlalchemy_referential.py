@@ -74,8 +74,6 @@ class Referential(fields.Field):
     def schema(self):
         context = getattr(self.parent, 'context', {})
 
-        print(class_registry)
-
         if isinstance(self._only, basestring):
             only = (self._only, )
         else:
